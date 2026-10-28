@@ -5,8 +5,8 @@
   "type": "module",
   "scripts": {
     "dev": "vite",
-    "build": "vite build",
-    "sync": "vite build && cap sync"
+    "build": "node use-debug-key.mjs && vite build",
+    "sync": "npm run build && cap sync"
   },
   "dependencies": {
     "@capacitor/android": "^6.2.0",
@@ -14,6 +14,7 @@
     "@capacitor/filesystem": "^6.0.0",
     "@capacitor/ios": "^6.2.0",
     "@capacitor/share": "^6.0.0",
+    "jspdf": "^2.5.2",
     "lucide-react": "^0.383.0",
     "react": "^18.3.1",
     "react-dom": "^18.3.1",
