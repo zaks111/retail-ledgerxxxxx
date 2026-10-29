@@ -1,8 +1,8 @@
 import { useState } from "react";
-import { Package, Users, Wallet, Truck, Receipt, StickyNote, Plus, Search, Lock, Settings, ShieldCheck, ChevronRight, Trash2, Share2, AlertTriangle } from "lucide-react";
+import { Package, Users, Wallet, Truck, Receipt, StickyNote, Plus, Search, Settings, ShieldCheck, ChevronRight, Trash2, Share2, AlertTriangle } from "lucide-react";
 import { Sheet, Field, Empty, Chip, Chips, Badge, Avatar } from "./ui";
 import { PayForm } from "./Forms";
-import { calcSale, owedBy, supplierBalance, fmtDay, todayISO, addDays, weekStart, trimNum, num, r2, uid } from "./logic";
+import { calcSale, owedBy, supplierBalance, groupItems, lineDetail, BUSINESS_TYPES, fmtDay, todayISO, addDays, weekStart, trimNum, num } from "./logic";
 
 export const LEDGER_TYPES = {
   bought: { label: "Bought on credit", sign: 1, hint: "You owe more" },
@@ -74,12 +74,13 @@ export function ReceiptSheet({ sale, money, onClose, A, openSheet }) {
     <Sheet title={sale.no} onClose={onClose}>
       <p className="muted small">{fmtDay(sale.date, { weekday: "long", month: "long", day: "numeric", year: "numeric" })} {sale.time} · {sale.customerName || "Walk-in"} · {sale.method}</p>
       <div className="card list flat">
-        {sale.items.map((i, k) => <div className="row" key={k}><span>{trimNum(i.qty)} {i.unit && i.unit !== "pcs" ? i.unit : "×"} {i.name}<br /><span className="muted small">{money(i.price)} each</span></span><span>{money(i.qty * i.price)}</span></div>)}
+        {groupItems(sale).map((g) => <div className="row" key={g.pid}><span>{g.name}<br /><span className="muted small">{lineDetail(g, money)}</span></span><span>{money(g.amount)}</span></div>)}
         {c.disc > 0 && <div className="row"><span>Discount</span><span>-{money(c.disc)}</span></div>}
         {c.tax > 0 && <div className="row"><span>Tax ({sale.taxRate}%)</span><span>{money(c.tax)}</span></div>}
         {c.other > 0 && <div className="row"><span>Other</span><span>{money(c.other)}</span></div>}
         <div className="row"><b>Total</b><b>{money(c.total)}</b></div>
-        <div className="row"><span>Paid</span><span>{money(c.paid)}</span></div>
+        <div className="row"><span>Paid</span><span>{money(c.paid + c.refunded)}</span></div>
+        {c.refunded > 0.004 && <div className="row"><span>Refunded</span><span>-{money(c.refunded)}</span></div>}
         {c.due > 0.004 && <div className="row"><b className="neg">Balance due</b><b className="neg">{money(c.due)}</b></div>}
       </div>
       {c.due > 0.004 && (
@@ -93,6 +94,7 @@ export function ReceiptSheet({ sale, money, onClose, A, openSheet }) {
         </div>
       )}
       <button className="primary big-btn" onClick={() => openSheet({ t: "share", sale })}><Share2 size={18} /> Share receipt</button>
+      {groupItems(sale).some((g) => g.parts.some((p) => p.orig - p.returned > 0)) && <button className="ghost" onClick={() => openSheet({ t: "return", id: sale.id })}>Return items</button>}
       {!confirm ? <button className="danger" onClick={() => setConfirm(true)}>Void this sale</button> : (
         <div className="card form"><p className="small">Voiding removes the sale and puts the stock back. Continue?</p><div className="split"><button className="danger" onClick={() => A.voidSale(sale.id)}>Yes, void it</button><button className="ghost" onClick={() => setConfirm(false)}>Keep it</button></div></div>
       )}
@@ -118,7 +120,9 @@ export function ShareSheet({ sale, A, onClose }) {
 export function ProductsPage({ db, money, openSheet, startFilter }) {
   const [q, setQ] = useState("");
   const [low, setLow] = useState(startFilter === "low");
-  const list = db.products.filter((p) => (!low || p.qty <= p.reorder) && (p.name + " " + (p.cat || "")).toLowerCase().includes(q.trim().toLowerCase()));
+  const [catF, setCatF] = useState("");
+  const cats = [...new Set(db.products.map((p) => p.cat).filter(Boolean))];
+  const list = db.products.filter((p) => (!low || p.qty <= p.reorder) && (!catF || p.cat === catF) && (p.name + " " + (p.cat || "")).toLowerCase().includes(q.trim().toLowerCase()));
   return (
     <>
       <div className="split">
@@ -127,6 +131,7 @@ export function ProductsPage({ db, money, openSheet, startFilter }) {
       </div>
       <Search_ value={q} onChange={setQ} placeholder="Search products" />
       <Chips><Chip on={!low} onClick={() => setLow(false)}>All ({db.products.length})</Chip><Chip on={low} onClick={() => setLow(true)}>Running low</Chip></Chips>
+      {cats.length > 0 && <Chips><Chip on={!catF} onClick={() => setCatF("")}>Any category</Chip>{cats.map((c) => <Chip key={c} on={catF === c} onClick={() => setCatF(c)}>{c}</Chip>)}</Chips>}
       {list.length === 0 ? <Empty>{db.products.length ? "No products match." : "No products yet. Add what you sell, with its cost and prices."}</Empty> : (
         <div className="card list">{list.map((p) => (
           <button className="row tap" key={p.id} onClick={() => openSheet({ t: "product", id: p.id })}>
@@ -186,7 +191,7 @@ export function CustomerSheet({ cust, db, money, A, onClose, openSheet }) {
 export function MorePage({ goView }) {
   const items = [
     ["expenses", "Expenses", Wallet], ["suppliers", "Suppliers and what you owe", Truck], ["notes", "Notes and tasks", StickyNote],
-    ["perf", "Performance and reports", Lock], ["settings", "Settings", Settings], ["backup", "Backup and restore", ShieldCheck],
+    ["settings", "Settings", Settings], ["backup", "Backup and restore", ShieldCheck],
   ];
   return <div className="card list">{items.map(([k, l, Icon]) => <button key={k} className="row tap" onClick={() => goView(k)}><span className="lead"><Icon size={20} /> {l}</span><ChevronRight size={18} /></button>)}</div>;
 }
@@ -264,5 +269,50 @@ export function NotesPage({ db, A, openSheet }) {
           </div>))}</div>
       )}
     </>
+  );
+}
+
+/* ---------- categories ---------- */
+export function CategoriesSheet({ db, A, onClose }) {
+  const cats = db.settings.categories || [];
+  const [name, setName] = useState("");
+  const [edit, setEdit] = useState(null);
+  const [val, setVal] = useState("");
+  const count = (c) => db.products.filter((p) => p.cat === c).length;
+  const type = BUSINESS_TYPES[db.settings.bizType];
+  const sugg = type ? type.cats.filter((c) => !cats.includes(c)) : [];
+  return (
+    <Sheet title="Categories" onClose={onClose}>
+      <div className="split">
+        <input value={name} onChange={(e) => setName(e.target.value)} placeholder="New category" aria-label="New category" onKeyDown={(e) => { if (e.key === "Enter" && name.trim()) { A.addCategory(name.trim()); setName(""); } }} />
+        <button className="primary" style={{ flex: "none" }} onClick={() => { if (name.trim()) { A.addCategory(name.trim()); setName(""); } }}>Add</button>
+      </div>
+      {cats.length === 0 ? <Empty>No categories yet. Add your own{sugg.length ? " or use the suggestions below" : ""}.</Empty> : (
+        <div className="card list">{cats.map((c) => (
+          <div className="row" key={c}>
+            {edit === c ? (
+              <>
+                <input value={val} onChange={(e) => setVal(e.target.value)} aria-label={`Rename ${c}`} />
+                <button className="ghost" style={{ flex: "none" }} onClick={() => { if (val.trim()) A.renameCategory(c, val.trim()); setEdit(null); }}>Save</button>
+              </>
+            ) : (
+              <>
+                <span><b>{c}</b><br /><span className="muted small">{count(c)} {count(c) === 1 ? "product" : "products"}</span></span>
+                <span className="split" style={{ flex: "none", gap: 14 }}>
+                  <button className="link" onClick={() => { setEdit(c); setVal(c); }}>Rename</button>
+                  <button className="link" onClick={() => A.deleteCategory(c)}>Delete</button>
+                </span>
+              </>
+            )}
+          </div>))}</div>
+      )}
+      {sugg.length > 0 && (
+        <>
+          <h2>Suggested for {type.label}</h2>
+          <Chips>{sugg.map((c) => <Chip key={c} onClick={() => A.addCategory(c)}>+ {c}</Chip>)}</Chips>
+        </>
+      )}
+      <p className="muted small">Renaming updates every product in it. Deleting moves its products to "no category".</p>
+    </Sheet>
   );
 }

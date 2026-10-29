@@ -2,12 +2,14 @@ import { Capacitor } from "@capacitor/core";
 import { Filesystem, Directory } from "@capacitor/filesystem";
 import { Share } from "@capacitor/share";
 import { jsPDF } from "jspdf";
-import { calcSale, fmtDay, trimNum, isLatin } from "./logic";
+import { calcSale, groupItems, lineDetail, fmtDay, isLatin } from "./logic";
 
 const native = Capacitor.isNativePlatform();
 const clean = (s) => String(s == null ? "" : s).replace(/[\u202F\u00A0]/g, " ");
 const pdfSafe = (s) => clean(s).replace(/[^\x20-\x7E\u00A0-\u00FF]/g, "");
 const hexRGB = (h) => { const m = /^#?([0-9a-f]{6})$/i.exec(h || ""); const n = m ? parseInt(m[1], 16) : 0x0f766e; return [(n >> 16) & 255, (n >> 8) & 255, n & 255]; };
+
+const loadImage = (src) => new Promise((res, rej) => { const i = new Image(); i.onload = () => res(i); i.onerror = () => rej(new Error("logo")); i.src = src; });
 
 /* The symbol for PDF receipts: PDFs only carry basic Latin characters, so fall back to the currency code. */
 export const pdfSymbol = (settings) => (isLatin(settings.cur) ? settings.cur : settings.curCode ? settings.curCode + " " : "");
@@ -15,17 +17,14 @@ export const pdfSymbol = (settings) => (isLatin(settings.cur) ? settings.cur : s
 /* One description of a receipt, drawn as text, image or PDF. */
 export function receiptModel(sale, settings, money) {
   const c = calcSale(sale);
-  const items = sale.items.map((i) => ({
-    name: i.name + (i.unit && i.unit !== "pcs" ? ` (${i.unit})` : ""),
-    detail: `${trimNum(i.qty)} x ${money(i.price)}`,
-    amount: money(i.qty * i.price),
-  }));
+  const items = groupItems(sale).map((g) => ({ name: g.name, detail: lineDetail(g, money), amount: money(g.amount) }));
   const totals = [["Subtotal", money(c.sub)]];
   if (c.disc > 0) totals.push(["Discount", "-" + money(c.disc)]);
   if (c.tax > 0) totals.push([`Tax (${sale.taxRate}%)`, money(c.tax)]);
   if (c.other > 0) totals.push(["Other charges", money(c.other)]);
   totals.push(["Total", money(c.total), true]);
-  totals.push(["Paid", money(c.paid)]);
+  totals.push(["Paid", money(c.paid + c.refunded)]);
+  if (c.refunded > 0.004) totals.push(["Refunded", "-" + money(c.refunded)]);
   if (c.due > 0.004) totals.push(["Balance due", money(c.due), true]);
   return {
     shop: settings.shop || "My shop",
@@ -39,6 +38,7 @@ export function receiptModel(sale, settings, money) {
     saved: c.concession > 0.004 ? "You saved " + money(c.concession) : "",
     footer: settings.footer || "",
     color: settings.receiptColor || "#0F766E",
+    logo: settings.logo || "",
   };
 }
 
@@ -73,16 +73,26 @@ const fit = (ctx, text, maxW) => {
 };
 const FONT = "system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif";
 
-export function receiptPNG(m) {
+const drawLogo = (ctx, img, cx, cy, box) => {
+  ctx.fillStyle = "#ffffff"; ctx.beginPath(); ctx.arc(cx, cy, box / 2 + 8, 0, Math.PI * 2); ctx.fill();
+  const k = Math.min(box / img.width, box / img.height), w = img.width * k, h = img.height * k;
+  ctx.drawImage(img, cx - w / 2, cy - h / 2, w, h);
+};
+
+export async function receiptPNG(m) {
   const W = 640, P = 40;
+  let img = null;
+  if (m.logo) { try { img = await loadImage(m.logo); } catch (e) { img = null; } }
+  const off = img ? 88 : 0;
   const paint = (ctx) => {
     ctx.fillStyle = "#ffffff"; ctx.fillRect(0, 0, W, 6000);
-    ctx.fillStyle = m.color; ctx.fillRect(0, 0, W, m.address || m.phone ? 132 : 100);
+    ctx.fillStyle = m.color; ctx.fillRect(0, 0, W, (m.address || m.phone ? 132 : 100) + off);
+    if (img) drawLogo(ctx, img, W / 2, 52, 64);
     ctx.textAlign = "center"; ctx.fillStyle = "#ffffff"; ctx.font = `700 34px ${FONT}`;
-    ctx.fillText(fit(ctx, m.shop, W - 2 * P), W / 2, 62);
-    let y = 100;
+    ctx.fillText(fit(ctx, m.shop, W - 2 * P), W / 2, 62 + off);
+    let y = 100 + off;
     const sub = [m.address, m.phone && "Tel: " + m.phone].filter(Boolean).join("  ·  ");
-    if (sub) { ctx.font = `400 20px ${FONT}`; ctx.fillText(fit(ctx, sub, W - 2 * P), W / 2, 98); y = 132; }
+    if (sub) { ctx.font = `400 20px ${FONT}`; ctx.fillText(fit(ctx, sub, W - 2 * P), W / 2, 98 + off); y = 132 + off; }
     y += 44;
     ctx.textAlign = "left"; ctx.fillStyle = "#6b7b7d"; ctx.font = `700 20px ${FONT}`; ctx.fillText("RECEIPT", P, y);
     ctx.textAlign = "right"; ctx.fillStyle = "#142022"; ctx.fillText(m.no || "", W - P, y);
@@ -115,24 +125,32 @@ export function receiptPNG(m) {
   return c.toDataURL("image/png").split(",")[1];
 }
 
-export function thankYouPNG(settings) {
-  const W = 720, H = 420, c = document.createElement("canvas"); c.width = W; c.height = H;
+export async function thankYouPNG(settings) {
+  let img = null;
+  if (settings.logo) { try { img = await loadImage(settings.logo); } catch (e) { img = null; } }
+  const off = img ? 70 : 0;
+  const W = 720, H = 420 + off, c = document.createElement("canvas"); c.width = W; c.height = H;
   const ctx = c.getContext("2d");
   ctx.fillStyle = settings.receiptColor || "#0F766E"; ctx.fillRect(0, 0, W, H);
   ctx.fillStyle = "rgba(255,255,255,0.12)"; ctx.beginPath(); ctx.arc(W - 60, 40, 170, 0, Math.PI * 2); ctx.fill();
+  if (img) drawLogo(ctx, img, W / 2, 62, 64);
   ctx.textAlign = "center"; ctx.fillStyle = "#fff";
-  ctx.font = `700 64px ${FONT}`; ctx.fillText("Thank you!", W / 2, 160);
-  ctx.font = `400 28px ${FONT}`; ctx.fillText("for shopping with us", W / 2, 215);
-  ctx.font = `700 38px ${FONT}`; ctx.fillText(fit(ctx, settings.shop || "", W - 80), W / 2, 290);
+  ctx.font = `700 64px ${FONT}`; ctx.fillText("Thank you!", W / 2, 160 + off);
+  ctx.font = `400 28px ${FONT}`; ctx.fillText("for shopping with us", W / 2, 215 + off);
+  ctx.font = `700 38px ${FONT}`; ctx.fillText(fit(ctx, settings.shop || "", W - 80), W / 2, 290 + off);
   ctx.font = `400 22px ${FONT}`;
   const sub = [settings.address, settings.phone && "Tel: " + settings.phone].filter(Boolean).join("  ·  ");
-  if (sub) ctx.fillText(fit(ctx, sub, W - 80), W / 2, 335);
+  if (sub) ctx.fillText(fit(ctx, sub, W - 80), W / 2, 335 + off);
   return c.toDataURL("image/png").split(",")[1];
 }
 
 /* ---------- PDF ---------- */
-export function receiptPDF(m, size) {
+export async function receiptPDF(m, size) {
   const small = size === "small";
+  let logo = null;
+  if (m.logo && /^data:image\/(png|jpe?g)/i.test(m.logo)) {
+    try { const im = await loadImage(m.logo); const lh = small ? 14 : 20; logo = { src: m.logo, fmt: /png/i.test(m.logo.slice(0, 20)) ? "PNG" : "JPEG", h: lh, w: Math.min(small ? 40 : 60, (lh * im.width) / im.height) }; } catch (e) { logo = null; }
+  }
   const w = small ? 80 : 210, M = small ? 5 : 18, fs = small ? 8.5 : 11, lh = small ? 4.4 : 6;
   const [r, g, b] = hexRGB(m.color);
   const draw = (doc, a4) => {
@@ -140,6 +158,7 @@ export function receiptPDF(m, size) {
     let y = M;
     const need = () => { if (a4 && y > 275) { doc.addPage(); y = M; } };
     const row = (l, rt, bold) => { need(); doc.setFont("helvetica", bold ? "bold" : "normal"); doc.setFontSize(bold ? fs + 1.5 : fs); doc.setTextColor(20, 32, 34); doc.text(pdfSafe(l), M, y); doc.text(pdfSafe(rt), R, y, { align: "right" }); y += bold ? lh + 1 : lh; };
+    if (logo) { doc.addImage(logo.src, logo.fmt, (w - logo.w) / 2, y, logo.w, logo.h); y += logo.h + 3; }
     doc.setFont("helvetica", "bold"); doc.setFontSize(fs + 6); doc.setTextColor(r, g, b);
     doc.splitTextToSize(pdfSafe(m.shop) || "Shop", w - 2 * M).forEach((t) => { doc.text(t, w / 2, y + 4, { align: "center" }); y += lh + 2; });
     doc.setFont("helvetica", "normal"); doc.setFontSize(fs - 0.5); doc.setTextColor(95, 112, 115);

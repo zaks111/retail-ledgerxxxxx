@@ -32,7 +32,17 @@ export async function hashPin(pin) {
 export const DEFAULT_SETTINGS = {
   shop: "My shop", phone: "", address: "", cur: "$", curCode: "", saleTax: 0, incomeTax: 0,
   theme: "auto", font: "m", pinHash: "", receiptColor: "#0F766E", footer: "Thank you for your business",
-  showEstimate: false, valueBasis: "cautious", setupDone: false, lastShared: "",
+  showEstimate: false, valueBasis: "cautious", setupDone: false, lastShared: "", bizType: "", categories: [], logo: "",
+};
+export const BUSINESS_TYPES = {
+  general: { label: "General shop", cats: ["Food and drinks", "Household", "Personal care", "Stationery", "Electronics", "Other"] },
+  grocery: { label: "Grocery and supermarket", cats: ["Drinks", "Snacks", "Rice and grains", "Cooking oil", "Canned food", "Toiletries", "Frozen", "Dairy", "Household"] },
+  pharmacy: { label: "Pharmacy", cats: ["Pain relief", "Antibiotics", "Vitamins", "First aid", "Baby care", "Personal care", "Medical devices"] },
+  clothing: { label: "Clothing and fashion", cats: ["Men", "Women", "Children", "Shoes", "Bags", "Accessories", "Fabrics"] },
+  electronics: { label: "Electronics and phones", cats: ["Phones", "Accessories", "Chargers and cables", "Audio", "Computers", "Home electronics", "Parts"] },
+  hardware: { label: "Building and hardware", cats: ["Cement and blocks", "Paint", "Plumbing", "Electrical", "Tools", "Roofing", "Doors and windows"] },
+  cosmetics: { label: "Cosmetics and beauty", cats: ["Skin care", "Hair care", "Perfume", "Makeup", "Nails", "Tools"] },
+  other: { label: "Other", cats: [] },
 };
 export const freshDb = () => ({
   v: 2, products: [], customers: [], custLedger: [], sales: [], expenses: [], suppliers: [], ledger: [],
@@ -55,24 +65,83 @@ export function migrate(raw) {
     cid: "", customerName: s.customer || "", discount: 0, other: 0, method: "Cash", fromDeposit: 0, time: "", taxRate: 0, paid: 0, ...s,
     items: (s.items || []).map((i) => ({ unit: "pcs", pcs: 1, show: i.price, ...i })),
   }));
+  const cats = [...(d.settings.categories || []), ...d.products.map((p) => p.cat).filter(Boolean)];
+  d.settings.categories = [...new Set(cats)];
   d.v = 2;
   return d;
 }
 
+export const returnedQty = (sale) => {
+  const r = {};
+  (sale.returns || []).forEach((x) => x.items.forEach((it) => { r[it.idx] = (r[it.idx] || 0) + it.qty; }));
+  return r;
+};
+
+/* Totals for one sale. Returned items stop counting, and money handed back is taken off what was paid. */
 export function calcSale(s) {
-  let sub = 0, showTotal = 0, cogs = 0;
-  for (const i of s.items || []) {
-    sub += i.qty * i.price;
-    showTotal += i.qty * (i.show == null ? i.price : i.show);
-    cogs += i.qty * (i.pcs || 1) * (i.cost || 0);
-  }
-  const disc = Math.min(s.discount || 0, sub);
+  const ret = returnedQty(s);
+  let sub = 0, origSub = 0, showTotal = 0, cogs = 0;
+  (s.items || []).forEach((i, k) => {
+    const q = i.qty - (ret[k] || 0);
+    sub += q * i.price;
+    origSub += i.qty * i.price;
+    showTotal += q * (i.show == null ? i.price : i.show);
+    cogs += q * (i.pcs || 1) * (i.cost || 0);
+  });
+  const origDisc = Math.min(s.discount || 0, origSub);
+  const disc = origSub > 0 ? origDisc * (sub / origSub) : 0;
   const other = s.other || 0;
   const base = sub - disc;
   const tax = (base * (s.taxRate || 0)) / 100;
   const total = r2(base + tax + other);
-  const paid = s.paid || 0;
-  return { sub: r2(sub), disc: r2(disc), other, base: r2(base), tax: r2(tax), total, revenue: r2(base + other), cogs: r2(cogs), paid, due: Math.max(0, r2(total - paid)), concession: r2(showTotal - sub + disc) };
+  const refunded = r2((s.returns || []).reduce((a, r) => a + (r.amount || 0), 0));
+  const paid = r2((s.paid || 0) - refunded);
+  return { sub: r2(sub), disc: r2(disc), other, base: r2(base), tax: r2(tax), total, revenue: r2(base + other), cogs: r2(cogs), paid, refunded, due: Math.max(0, r2(total - paid)), concession: r2(showTotal - sub + disc) };
+}
+
+/* One entry per product, with its unit parts: 2 dozen + 3 pcs = 27 pcs. */
+export function groupItems(sale) {
+  const ret = returnedQty(sale);
+  const order = [], map = {};
+  (sale.items || []).forEach((i, idx) => {
+    if (!map[i.pid]) { map[i.pid] = { pid: i.pid, name: i.name, base: i.base || "pcs", parts: [], pcs: 0, amount: 0 }; order.push(i.pid); }
+    const g = map[i.pid], eff = i.qty - (ret[idx] || 0);
+    if (i.base) g.base = i.base;
+    g.parts.push({ idx, unit: i.unit || "pcs", pcsPer: i.pcs || 1, qty: eff, orig: i.qty, returned: ret[idx] || 0, price: i.price, show: i.show });
+    g.pcs += eff * (i.pcs || 1);
+    g.amount += eff * i.price;
+  });
+  return order.map((k) => map[k]);
+}
+
+export function partsText(parts, base) {
+  const live = parts.filter((p) => p.qty > 0);
+  if (!live.length) return "all returned";
+  const txt = live.map((p) => `${trimNum(p.qty)} ${p.unit}`).join(" + ");
+  const total = live.reduce((a, p) => a + p.qty * p.pcsPer, 0);
+  return live.length > 1 || live[0].pcsPer !== 1 ? `${txt} (${trimNum(total)} ${base || "pcs"})` : txt;
+}
+
+export function lineDetail(g, money) {
+  const live = g.parts.filter((p) => p.qty > 0);
+  const back = g.parts.reduce((x, p) => x + p.returned, 0);
+  let d = live.length === 1 ? `${trimNum(live[0].qty)} ${live[0].unit} x ${money(live[0].price)}` : partsText(g.parts, g.base);
+  if (back > 0 && live.length) d += ` (${trimNum(back)} returned)`;
+  return d;
+}
+
+/* Cheapest way to sell N base units using the product's own unit prices, e.g. 27 pcs = 2 dozen + 3 pcs. */
+export function bestPack(units, totalPcs) {
+  const n = Math.round(totalPcs);
+  if (!(n > 0) || Math.abs(totalPcs - n) > 1e-9) return null;
+  const us = units.filter((u) => u.pcs > 0 && Number.isInteger(u.pcs) && u.price > 0).sort((a, b) => b.pcs - a.pcs);
+  let rem = n, price = 0;
+  const parts = [];
+  for (const u of us) {
+    const q = Math.floor(rem / u.pcs);
+    if (q > 0) { parts.push({ unitId: u.id, qty: q, price: u.price }); price += q * u.price; rem -= q * u.pcs; }
+  }
+  return rem === 0 ? { parts, price: r2(price) } : null;
 }
 
 export const stockUse = (items) => {

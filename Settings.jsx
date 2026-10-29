@@ -1,14 +1,22 @@
 import { useState, useRef } from "react";
 import { Field, Chip, Chips, PinPad } from "./ui";
-import { hashPin, num } from "./logic";
+import { resizeImage } from "./Forms";
+import { hashPin, num, BUSINESS_TYPES } from "./logic";
 import { backupNow, shareBackup, parseBackup } from "./storage";
 
 const COLORS = ["#0F766E", "#2563EB", "#7C3AED", "#DB2777", "#D97706", "#334155"];
 
-export function SettingsPage({ db, A }) {
+export function SettingsPage({ db, A, openSheet }) {
   const s = db.settings;
   const [f, setF] = useState({ shop: s.shop, phone: s.phone, address: s.address, cur: s.cur, curCode: s.curCode, saleTax: String(s.saleTax), incomeTax: String(s.incomeTax), footer: s.footer });
   const set = (k) => (e) => setF({ ...f, [k]: e.target.value });
+  const logoRef = useRef(null);
+  const [logoErr, setLogoErr] = useState("");
+  const pickLogo = async (e) => {
+    const f = e.target.files && e.target.files[0]; e.target.value = "";
+    if (!f) return;
+    try { A.saveSettings({ logo: await resizeImage(f, 300, "image/png") }, "Logo saved"); setLogoErr(""); } catch (x) { setLogoErr(x.message); }
+  };
   const [pinStep, setPinStep] = useState(null); // null | "verify-change" | "verify-remove" | "new"
   const [p1, setP1] = useState(""); const [p2, setP2] = useState(""); const [pe, setPe] = useState("");
 
@@ -39,6 +47,26 @@ export function SettingsPage({ db, A }) {
         <Field label="Receipt footer"><input value={f.footer} onChange={set("footer")} /></Field>
         <button className="primary" onClick={() => A.saveSettings({ shop: f.shop.trim() || "My shop", phone: f.phone.trim(), address: f.address.trim(), cur: f.cur, curCode: f.curCode.trim().toUpperCase(), saleTax: num(f.saleTax), incomeTax: num(f.incomeTax), footer: f.footer.trim() }, "Settings saved")}>Save</button>
         <p className="muted small">The sales tax applies to new sales only. Past receipts keep the rate they were issued with.</p>
+      </div>
+
+      <div className="card form">
+        <h2>Business logo</h2>
+        <div className="photo">
+          {s.logo ? <img className="logo-prev" src={s.logo} alt="Your logo" /> : <span className="logo-prev empty-logo">No logo</span>}
+          <div className="form" style={{ gap: 6 }}>
+            <button className="ghost" onClick={() => logoRef.current && logoRef.current.click()}>{s.logo ? "Change logo" : "Upload logo"}</button>
+            {s.logo && <button className="link" onClick={() => A.saveSettings({ logo: "" }, "Logo removed")}>Remove logo</button>}
+          </div>
+          <input ref={logoRef} type="file" accept="image/*" hidden onChange={pickLogo} />
+        </div>
+        {logoErr && <p className="err" role="alert">{logoErr}</p>}
+        <p className="muted small">It appears on Home, receipts and the thank-you card.</p>
+      </div>
+
+      <div className="card form">
+        <h2>Business type and categories</h2>
+        <Chips>{Object.entries(BUSINESS_TYPES).map(([k, v]) => <Chip key={k} on={s.bizType === k} onClick={() => A.saveSettings({ bizType: k })}>{v.label}</Chip>)}</Chips>
+        <button className="ghost" onClick={() => openSheet({ t: "categories" })}>Manage categories ({(s.categories || []).length})</button>
       </div>
 
       <div className="card form">

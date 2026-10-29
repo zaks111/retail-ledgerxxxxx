@@ -1,25 +1,25 @@
 import { useState, useRef } from "react";
 import { Camera, Plus, Trash2 } from "lucide-react";
 import { Field, Chip, Chips, Avatar } from "./ui";
-import { uid, num, r2, todayISO, trimNum } from "./logic";
+import { uid, num, r2, todayISO, trimNum, calcSale, groupItems, partsText } from "./logic";
 
 const EXPENSE_CATS = ["Rent", "Wages", "Utilities", "Transport", "Marketing", "Repairs", "Packaging", "Fees", "Other"];
 const PRESETS = [["Dozen", 12], ["½ dozen", 6], ["¼ dozen", 3], ["Carton", 24], ["Bundle", 10]];
 const METHODS = ["Cash", "Mobile", "Bank"];
 
-const resizeImage = (file, max = 256) => new Promise((res, rej) => {
+export const resizeImage = (file, max = 256, type = "image/jpeg") => new Promise((res, rej) => {
   const img = new Image(); const url = URL.createObjectURL(file);
   img.onload = () => {
     const k = Math.min(1, max / Math.max(img.width, img.height));
     const c = document.createElement("canvas"); c.width = Math.max(1, Math.round(img.width * k)); c.height = Math.max(1, Math.round(img.height * k));
     c.getContext("2d").drawImage(img, 0, 0, c.width, c.height);
-    URL.revokeObjectURL(url); res(c.toDataURL("image/jpeg", 0.72));
+    URL.revokeObjectURL(url); res(type === "image/png" ? c.toDataURL("image/png") : c.toDataURL("image/jpeg", 0.72));
   };
   img.onerror = () => { URL.revokeObjectURL(url); rej(new Error("Couldn't read that image.")); };
   img.src = url;
 });
 
-export function ProductForm({ db, money, product, onSave, onDelete, onReduce }) {
+export function ProductForm({ db, money, product, onSave, onDelete, onReduce, onAddCategory }) {
   const edit = !!product;
   const [photo, setPhoto] = useState(product ? product.photo : "");
   const [name, setName] = useState(product ? product.name : "");
@@ -32,10 +32,13 @@ export function ProductForm({ db, money, product, onSave, onDelete, onReduce }) 
       : [{ id: uid(), name: "pcs", pcs: "1", show: "", price: "" }]
   );
   const [err, setErr] = useState("");
+  const [addingCat, setAddingCat] = useState(false);
+  const [newCat, setNewCat] = useState("");
+  const [confirmDel, setConfirmDel] = useState(false);
   const fileRef = useRef(null);
   const base = units[0].name.trim() || "pcs";
   const setU = (i, patch) => setUnits((us) => us.map((u, j) => (j === i ? { ...u, ...patch } : u)));
-  const cats = [...new Set(db.products.map((p) => p.cat).filter(Boolean))];
+  const cats = [...new Set([...(db.settings.categories || []), ...(cat ? [cat] : [])])];
 
   const pick = async (e) => {
     const f = e.target.files && e.target.files[0]; e.target.value = "";
@@ -61,8 +64,20 @@ export function ProductForm({ db, money, product, onSave, onDelete, onReduce }) 
         <input ref={fileRef} type="file" accept="image/*" hidden onChange={pick} />
       </div>
       <Field label="Product name"><input value={name} onChange={(e) => setName(e.target.value)} /></Field>
-      <Field label="Category (optional)"><input value={cat} onChange={(e) => setCat(e.target.value)} list="cats" /></Field>
-      <datalist id="cats">{cats.map((c) => <option key={c} value={c} />)}</datalist>
+      <div className="fld">
+        <span>Category (optional)</span>
+        <Chips>
+          <Chip on={!cat} onClick={() => setCat("")}>None</Chip>
+          {cats.map((c) => <Chip key={c} on={cat === c} onClick={() => setCat(c)}>{c}</Chip>)}
+          <Chip onClick={() => setAddingCat(true)}>+ New</Chip>
+        </Chips>
+        {addingCat && (
+          <div className="split">
+            <input value={newCat} onChange={(e) => setNewCat(e.target.value)} placeholder="New category name" aria-label="New category name" />
+            <button className="ghost" onClick={() => { const n = newCat.trim(); if (n) { onAddCategory(n); setCat(n); } setNewCat(""); setAddingCat(false); }}>Add</button>
+          </div>
+        )}
+      </div>
       <div className="split">
         <Field label={`Cost per ${base}`}><input inputMode="decimal" value={cost} onChange={(e) => setCost(e.target.value)} placeholder="0" /></Field>
         <Field label={`${edit ? "In stock" : "Opening stock"} (${base})`}><input inputMode="decimal" value={qty} onChange={(e) => setQty(e.target.value)} /></Field>
@@ -101,7 +116,10 @@ export function ProductForm({ db, money, product, onSave, onDelete, onReduce }) 
       {err && <p className="err" role="alert">{err}</p>}
       <button className="primary" onClick={save}>Save product</button>
       {edit && onReduce && <button className="ghost" onClick={onReduce}>Reduce stock (damaged, lost, returned)</button>}
-      {edit && onDelete && <button className="danger" onClick={onDelete}><Trash2 size={16} /> Delete product</button>}
+      {edit && onDelete && !confirmDel && <button className="danger" onClick={() => setConfirmDel(true)}><Trash2 size={16} /> Delete product</button>}
+      {edit && onDelete && confirmDel && (
+        <div className="card form"><p className="small">Delete {name || "this product"}? Past sales keep their records.</p><div className="split"><button className="danger" onClick={onDelete}>Yes, delete</button><button className="ghost" onClick={() => setConfirmDel(false)}>Keep it</button></div></div>
+      )}
     </div>
   );
 }
@@ -228,6 +246,62 @@ export function NoteForm({ onSave }) {
       <textarea value={text} onChange={(e) => setText(e.target.value)} placeholder={task ? "What needs doing?" : "Write a note"} aria-label="Note text" />
       {err && <p className="err" role="alert">{err}</p>}
       <button className="primary" onClick={() => (text.trim() ? onSave({ text: text.trim(), task }) : setErr("Write something first."))}>Save</button>
+    </div>
+  );
+}
+
+export function ReturnForm({ sale, money, onSave }) {
+  const groups = groupItems(sale);
+  const [qty, setQty] = useState({});
+  const [mode, setMode] = useState("cash");
+  const [method, setMethod] = useState("Cash");
+  const [restock, setRestock] = useState(true);
+  const [note, setNote] = useState("");
+  const [amt, setAmt] = useState(null);
+  const [err, setErr] = useState("");
+  const chosen = Object.entries(qty).map(([idx, v]) => ({ idx: Number(idx), qty: num(v) })).filter((x) => x.qty > 0);
+  const before = calcSale(sale);
+  const after = calcSale({ ...sale, returns: [...(sale.returns || []), { items: chosen, amount: 0 }] });
+  const suggest = Math.max(0, r2(before.paid - after.total));
+  const refund = amt === null ? suggest : num(amt);
+  const save = () => {
+    if (!chosen.length) return setErr("Enter how many to return.");
+    for (const g of groups) for (const p of g.parts) { const v = num(qty[p.idx]); if (v > p.orig - p.returned + 1e-9) return setErr(`You can return at most ${trimNum(p.orig - p.returned)} ${p.unit} of ${g.name}.`); }
+    if (refund > before.paid + 0.004) return setErr(`You can't refund more than was paid (${money(before.paid)}).`);
+    onSave({ items: chosen, amount: r2(refund), mode: refund > 0 ? mode : "none", method, restock, note: note.trim() });
+  };
+  return (
+    <div className="form">
+      {groups.map((g) => (
+        <div className="card flat" key={g.pid}>
+          <b>{g.name}</b> <span className="muted small">{partsText(g.parts, g.base)}</span>
+          {g.parts.filter((p) => p.orig - p.returned > 0).map((p) => (
+            <div className="row" key={p.idx}>
+              <span>{p.unit} <span className="muted small">(up to {trimNum(p.orig - p.returned)})</span></span>
+              <input style={{ width: 90 }} inputMode="decimal" value={qty[p.idx] || ""} onChange={(e) => setQty({ ...qty, [p.idx]: e.target.value })} placeholder="0" aria-label={`Return ${g.name} ${p.unit}`} />
+            </div>
+          ))}
+        </div>
+      ))}
+      <div className="card flat">
+        <div className="row"><span>New total</span><b>{money(after.total)}</b></div>
+        {after.due > 0.004 && <div className="row"><span>Customer still owes</span><b className="neg">{money(after.due)}</b></div>}
+      </div>
+      <Field label="Money to give back" hint={suggest > 0 ? `Suggested ${money(suggest)} (paid minus the new total)` : "Nothing was paid beyond the new total."}><input inputMode="decimal" value={amt === null ? (suggest ? String(suggest) : "") : amt} onChange={(e) => setAmt(e.target.value)} placeholder="0" aria-label="Money to give back" /></Field>
+      {refund > 0 && (
+        <>
+          <Chips>
+            <Chip on={mode === "cash"} onClick={() => setMode("cash")}>Give money back</Chip>
+            {sale.cid && <Chip on={mode === "credit"} onClick={() => setMode("credit")}>Keep as customer credit</Chip>}
+          </Chips>
+          {mode === "cash" && <Chips>{METHODS.map((m) => <Chip key={m} on={method === m} onClick={() => setMethod(m)}>{m}</Chip>)}</Chips>}
+        </>
+      )}
+      <label style={{ display: "flex", gap: 8, alignItems: "center" }}><input type="checkbox" style={{ width: "auto" }} checked={restock} onChange={(e) => setRestock(e.target.checked)} /> Put the items back in stock</label>
+      {!restock && <p className="muted small">Items that aren't restocked are recorded as a loss at cost.</p>}
+      <Field label="Note (optional)"><input value={note} onChange={(e) => setNote(e.target.value)} /></Field>
+      {err && <p className="err" role="alert">{err}</p>}
+      <button className="primary" onClick={save}>Record return</button>
     </div>
   );
 }
