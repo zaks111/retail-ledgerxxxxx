@@ -2,13 +2,19 @@ import { useState, useMemo } from "react";
 import { BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, ReferenceLine, Cell } from "recharts";
 import { Chip, Chips } from "./ui";
 import { LEDGER_TYPES } from "./Pages";
-import { summarize, periodsFor, stockValues, supplierBalance, labelFor, shortFor, todayISO, calcSale, r2 } from "./logic";
+import { ProductsAnalysis, TrendsAnalysis, RangePicker } from "./Analysis";
+import { rangeFor } from "./analysis";
+import { summarize, periodsFor, stockValues, supplierBalance, labelFor, shortFor, todayISO, addDays, calcSale, r2 } from "./logic";
 
 export default function PerfPage({ db, money, copy, onHide, hasPin }) {
   const today = todayISO();
   const [mode, setMode] = useState("month");
   const [sel, setSel] = useState(null);
   const [basis, setBasis] = useState(db.settings.valueBasis || "cautious");
+  const [page, setPage] = useState("overview");
+  const [rk, setRk] = useState("30d");
+  const [custom, setCustom] = useState({ from: addDays(today, -29), to: today });
+  const range = rangeFor(rk, today, custom);
   const tax = db.settings.incomeTax;
   const losses = db.stockLog.filter((l) => l.loss);
   const day = summarize(db.sales.filter((s) => s.date === today), db.expenses.filter((e) => e.date === today), losses.filter((l) => l.date === today), tax);
@@ -32,6 +38,12 @@ export default function PerfPage({ db, money, copy, onHide, hasPin }) {
   return (
     <>
       <div className="split between"><p className="muted small">{hasPin ? "Private. It locks again when you leave." : "Set a PIN in Settings to keep this private."}</p><button className="ghost" onClick={onHide}>Hide</button></div>
+      <div className="seg" role="tablist">{[["overview", "Overview"], ["products", "Products"], ["trends", "Trends"]].map(([k, l]) => <button key={k} role="tab" aria-selected={page === k} className={page === k ? "on" : ""} onClick={() => setPage(k)}>{l}</button>)}</div>
+      {page !== "overview" && <RangePicker rk={rk} setRk={setRk} custom={custom} setCustom={setCustom} />}
+      {page === "products" && <ProductsAnalysis db={db} money={money} range={range} today={today} />}
+      {page === "trends" && <TrendsAnalysis db={db} money={money} range={range} />}
+      {page === "overview" && (
+      <>
       <div className="grid2">
         <div className="card"><p className="muted small">Profit today</p><p className={"amt " + (day.net < 0 ? "neg" : "pos")}>{money(day.net)}</p><p className="muted small">Sales {money(day.revenue)}</p></div>
         <div className="card"><p className="muted small">Profit this month</p><p className={"amt " + (mon.net < 0 ? "neg" : "pos")}>{money(mon.net)}</p><p className="muted small">Sales {money(mon.revenue)}</p></div>
@@ -94,6 +106,8 @@ export default function PerfPage({ db, money, copy, onHide, hasPin }) {
           </button>
         ))}
       </div>
+      </>
+      )}
     </>
   );
 }

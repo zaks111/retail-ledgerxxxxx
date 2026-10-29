@@ -155,6 +155,9 @@ input:focus-visible,select:focus-visible,textarea:focus-visible,button:focus-vis
 .prow{background:var(--card);border:1px solid var(--line);border-radius:16px;padding:12px;display:flex;flex-direction:column;gap:9px;box-shadow:var(--shadow)}
 .addrow{display:grid;grid-template-columns:78px 1fr auto;gap:8px;align-items:center}
 .block{background:var(--card);border:1px solid var(--line);border-radius:16px;padding:12px;display:flex;flex-direction:column;gap:10px;box-shadow:var(--shadow)}
+.brow{position:relative;border-radius:12px;overflow:hidden;background:var(--card);border:1px solid var(--line)}
+.bfill{position:absolute;top:0;bottom:0;left:0;opacity:.17}
+.bcontent{position:relative;display:flex;justify-content:space-between;align-items:center;gap:10px;padding:10px 12px}
 .qp{display:grid;grid-template-columns:auto minmax(0,1fr);gap:10px;align-items:end}.qp .fld{min-width:0}
 .part{background:var(--soft);border-radius:12px;padding:10px;display:flex;flex-direction:column;gap:8px}
 .sugg{border:1px dashed var(--pri);background:transparent;color:var(--ink);border-radius:12px;padding:10px 12px;text-align:left;font-size:.88em}

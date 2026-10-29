@@ -185,7 +185,7 @@ export default function App() {
     addExpense: (e) => act("Expense saved", () => { setDb((d) => ({ ...d, expenses: [{ id: uid(), ...e }, ...d.expenses] })); closeSheet(); }),
     delExpense: (id) => act("Expense deleted", () => setDb((d) => ({ ...d, expenses: d.expenses.filter((e) => e.id !== id) }))),
 
-    addProduct: (p) => act("Product added", () => { setDb((d) => ({ ...d, products: [...d.products, { id: uid(), ...p }] })); closeSheet(); }),
+    addProduct: (p) => act("Product added", () => { setDb((d) => ({ ...d, products: [...d.products, { id: uid(), added: todayISO(), ...p }] })); closeSheet(); }),
     updProduct: (id, patch) => act("Product updated", () => { setDb((d) => ({ ...d, products: d.products.map((p) => (p.id === id ? { ...p, ...patch } : p)) })); closeSheet(); }),
     delProduct: (id) => act("Product deleted", () => { setDb((d) => ({ ...d, products: d.products.filter((p) => p.id !== id) })); closeSheet(); }),
     receiveStock: ({ pid, unitId, qty, unitCost, sid, paid }) => act("Stock received", () => {
@@ -254,7 +254,7 @@ export default function App() {
         return {
           ...d,
           settings: { ...d.settings, shop, cur, saleTax, bizType, categories: cats, setupDone: true },
-          products: sample && !d.products.length ? SAMPLES.map((x) => ({ id: uid(), photo: "", ...x, units: x.units.map((u) => ({ id: uid(), ...u })) })) : d.products,
+          products: sample && !d.products.length ? SAMPLES.map((x) => ({ id: uid(), photo: "", added: todayISO(), ...x, units: x.units.map((u) => ({ id: uid(), ...u })) })) : d.products,
         };
       });
     },
