@@ -89,3 +89,15 @@ export function parseBackup(text) {
   }
   return d;
 }
+
+/* A dated copy of everything, written to the phone before an import or restore changes anything. */
+export async function safetyCopy(db) {
+  if (!native) return "";
+  try {
+    await ensurePermission();
+    const t = new Date(), p = (n) => String(n).padStart(2, "0");
+    const name = `before-import-${today()}-${p(t.getHours())}${p(t.getMinutes())}.json`;
+    await write(`${BACKUP_DIR}/${name}`, JSON.stringify(db), Directory.Documents);
+    return name;
+  } catch (e) { return ""; }
+}

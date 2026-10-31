@@ -1,18 +1,19 @@
 import { useState, useEffect, useRef } from "react";
 import { Capacitor } from "@capacitor/core";
 import { App as CapApp } from "@capacitor/app";
-import { Home, ShoppingBag, Package, Users, MoreHorizontal, MoreVertical, ChevronLeft, Lock, Settings, ShieldCheck, BarChart3, Plus, Tags } from "lucide-react";
+import { Home, ShoppingBag, Package, Users, MoreHorizontal, MoreVertical, ChevronLeft, Lock, Settings, ShieldCheck, BarChart3, Plus, Tags, Upload, Download } from "lucide-react";
 import { CSS, Sheet, Gate, Field, Chip, Chips } from "./ui";
 import {
   uid, num, r2, todayISO, nowTime, makeMoney, migrate, freshDb, stockUse, allocatePayment, addUnitCostPerPcs, receiveCost, calcSale, groupItems, BUSINESS_TYPES,
 } from "./logic";
-import { loadDb, saveDb } from "./storage";
+import { loadDb, saveDb, safetyCopy } from "./storage";
 import { receiptModel, receiptText, receiptPNG, receiptPDF, thankYouPNG, shareFile, shareText, pdfSymbol } from "./receipt";
 import SellFlow from "./SellFlow";
 import { ProductForm, ReceiveForm, AdjustForm, CustomerForm, ExpenseForm, SupplierForm, NoteForm, ReturnForm } from "./Forms";
 import { HomePage, SalesPage, ReceiptSheet, ShareSheet, ProductsPage, CustomersPage, CustomerSheet, MorePage, ExpensesPage, SuppliersPage, SupplierSheet, NotesPage, CategoriesSheet } from "./Pages";
 import PerfPage from "./Reports";
 import { SettingsPage, BackupPage } from "./Settings";
+import { ImportSheet, ExportSheet } from "./Transfer";
 
 const TABS = [["home", "Home", Home], ["sales", "Sales", ShoppingBag], ["products", "Products", Package], ["customers", "Customers", Users], ["more", "More", MoreHorizontal]];
 const VIEW_TITLES = { expenses: "Expenses", suppliers: "Suppliers", notes: "Notes and tasks", perf: "Performance and reports", settings: "Settings", backup: "Backup and restore" };
@@ -113,7 +114,8 @@ export default function App() {
   const A = {
     saveSettings: (patch, msg) => { setDb((d) => ({ ...d, settings: { ...d.settings, ...patch } })); if (msg) say(msg); },
     markShared: () => setDb((d) => ({ ...d, settings: { ...d.settings, lastShared: todayISO() } })),
-    restoreDb: (raw) => { setDb(migrate(raw)); say("Backup restored"); },
+    applyImport: (newDb, msg) => act(msg, () => { safetyCopy(db); setDb(newDb); closeSheet(); }),
+    replaceAll: (raw) => act("Backup restored", () => { safetyCopy(db); setDb(migrate(raw)); closeSheet(); }),
 
     saveSale: (draft) => act("Sale saved", () => {
       const no = "INV-" + String(db.seq).padStart(4, "0");
@@ -293,6 +295,8 @@ export default function App() {
       case "receipt": return <ReceiptSheet sale={find(db.sales, sheet.id)} money={money} A={A} onClose={closeSheet} openSheet={setSheet} />;
       case "return": { const sl = find(db.sales, sheet.id); return sl ? <Sheet title={"Return items · " + sl.no} onClose={closeSheet}><ReturnForm sale={sl} money={money} onSave={(x) => A.returnItems(sl.id, x)} /></Sheet> : null; }
       case "share": return <ShareSheet sale={sheet.sale} A={A} onClose={closeSheet} />;
+      case "import": return <ImportSheet key={sheet.kind} db={db} money={money} kind={sheet.kind} A={A} say={say} onClose={closeSheet} />;
+      case "export": return <ExportSheet db={db} what={sheet.what} say={say} onClose={closeSheet} />;
       case "categories": return <CategoriesSheet db={db} A={A} onClose={closeSheet} />;
       case "expense": return <Sheet title="Add expense" onClose={closeSheet}><ExpenseForm onSave={A.addExpense} /></Sheet>;
       case "supplier": return <Sheet title="Add supplier" onClose={closeSheet}><SupplierForm onSave={A.addSupplier} /></Sheet>;
@@ -315,6 +319,20 @@ export default function App() {
     menuItems = [
       ...(db.products.length ? [{ label: "Receive stock", Icon: Package, fn: () => { setMenu(false); setSheet({ t: "receive" }); } }] : []),
       { label: "Categories", Icon: Tags, fn: () => { setMenu(false); setSheet({ t: "categories" }); } },
+      { label: "Import products", Icon: Upload, fn: () => { setMenu(false); setSheet({ t: "import", kind: "products" }); } },
+      { label: "Export products", Icon: Download, fn: () => { setMenu(false); setSheet({ t: "export", what: "products" }); } },
+    ];
+  } else if (!view && tab === "sales") {
+    menuItems = [{ label: "Export sales", Icon: Download, fn: () => { setMenu(false); setSheet({ t: "export", what: "sales" }); } }];
+  } else if (!view && tab === "customers") {
+    menuItems = [
+      { label: "Import customers", Icon: Upload, fn: () => { setMenu(false); setSheet({ t: "import", kind: "customers" }); } },
+      { label: "Export customers", Icon: Download, fn: () => { setMenu(false); setSheet({ t: "export", what: "customers" }); } },
+    ];
+  } else if (view === "expenses") {
+    menuItems = [
+      { label: "Import expenses", Icon: Upload, fn: () => { setMenu(false); setSheet({ t: "import", kind: "expenses" }); } },
+      { label: "Export expenses", Icon: Download, fn: () => { setMenu(false); setSheet({ t: "export", what: "expenses" }); } },
     ];
   }
 
@@ -356,7 +374,7 @@ export default function App() {
             {view === "suppliers" && <SuppliersPage db={db} money={money} openSheet={setSheet} />}
             {view === "notes" && <NotesPage db={db} A={A} openSheet={setSheet} />}
             {view === "settings" && <SettingsPage db={db} A={A} openSheet={setSheet} />}
-            {view === "backup" && <BackupPage db={db} A={A} />}
+            {view === "backup" && <BackupPage db={db} A={A} openSheet={setSheet} />}
             {view === "perf" && (
               <Gate settings={s} unlocked={unlocked} onUnlock={() => setUnlocked(true)} onReset={() => A.saveSettings({ pinHash: "" }, "PIN removed")} note="Your profit, debts and reports are private.">
                 <PerfPage db={db} money={money} hasPin={hasPin} copy={async (t) => { try { await navigator.clipboard.writeText(t); say("Copied"); } catch (e) { say("Copying isn't available here"); } }} onHide={() => { setUnlocked(false); goView(null); }} />

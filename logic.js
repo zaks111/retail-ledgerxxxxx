@@ -184,6 +184,12 @@ export function stockValues(products) {
   return { cost: r2(cost), cautious: r2(cautious), retail: r2(retail), showing: r2(showing) };
 }
 
+export const LEDGER_TYPES = {
+  bought: { label: "Bought on credit", sign: 1, hint: "You owe more" },
+  paid: { label: "I paid them", sign: -1, hint: "You owe less" },
+  theyowe: { label: "They owe me", sign: -1, hint: "Returns, advance, or overpayment" },
+  repaid: { label: "They paid me back", sign: 1, hint: "Clears what they owed you" },
+};
 export const supplierBalance = (ledger, sid, types) => ledger.filter((l) => l.sid === sid).reduce((a, l) => a + types[l.type].sign * l.amount, 0);
 export const owedBy = (sales, cid) => r2(sales.filter((s) => s.cid === cid).reduce((a, s) => a + calcSale(s).due, 0));
 

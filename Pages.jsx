@@ -2,14 +2,9 @@ import { useState } from "react";
 import { Package, Users, Wallet, Truck, Receipt, StickyNote, Plus, Search, Settings, ShieldCheck, ChevronRight, Trash2, Share2, AlertTriangle } from "lucide-react";
 import { Sheet, Field, Empty, Chip, Chips, Badge, Avatar } from "./ui";
 import { PayForm } from "./Forms";
-import { calcSale, owedBy, supplierBalance, groupItems, lineDetail, BUSINESS_TYPES, fmtDay, todayISO, addDays, weekStart, trimNum, num } from "./logic";
+import { LEDGER_TYPES, calcSale, owedBy, supplierBalance, groupItems, lineDetail, BUSINESS_TYPES, fmtDay, todayISO, addDays, weekStart, trimNum, num } from "./logic";
 
-export const LEDGER_TYPES = {
-  bought: { label: "Bought on credit", sign: 1, hint: "You owe more" },
-  paid: { label: "I paid them", sign: -1, hint: "You owe less" },
-  theyowe: { label: "They owe me", sign: -1, hint: "Returns, advance, or overpayment" },
-  repaid: { label: "They paid me back", sign: 1, hint: "Clears what they owed you" },
-};
+export { LEDGER_TYPES };
 const daysSince = (iso) => Math.floor((Date.now() - new Date(iso + "T00:00:00").getTime()) / 86400000);
 const Search_ = ({ value, onChange, placeholder }) => <div className="search"><Search size={18} /><input value={value} onChange={(e) => onChange(e.target.value)} placeholder={placeholder} aria-label={placeholder} /></div>;
 

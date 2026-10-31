@@ -2,7 +2,7 @@ import { useState, useRef } from "react";
 import { Field, Chip, Chips, PinPad } from "./ui";
 import { resizeImage } from "./Forms";
 import { hashPin, num, BUSINESS_TYPES } from "./logic";
-import { backupNow, shareBackup, parseBackup } from "./storage";
+import { backupNow, shareBackup } from "./storage";
 
 const COLORS = ["#0F766E", "#2563EB", "#7C3AED", "#DB2777", "#D97706", "#334155"];
 
@@ -105,32 +105,27 @@ export function SettingsPage({ db, A, openSheet }) {
   );
 }
 
-export function BackupPage({ db, A }) {
+export function BackupPage({ db, A, openSheet }) {
   const [msg, setMsg] = useState("");
-  const [pending, setPending] = useState(null);
-  const fileRef = useRef(null);
   const run = async (fn) => { try { setMsg(await fn()); } catch (e) { setMsg("That didn't work: " + (e && e.message ? e.message : e)); } };
-  const pick = async (e) => {
-    const f = e.target.files && e.target.files[0]; e.target.value = "";
-    if (!f) return;
-    try { setPending({ name: f.name, data: parseBackup(await f.text()) }); setMsg(""); } catch (err) { setMsg(err.message); }
-  };
   return (
-    <div className="card form">
-      <p className="muted small">Your records are stored inside this app. Every change is also saved as a file in Documents/RetailLedger on your phone. If the phone is lost, broken or reset, those files go with it, so send a copy somewhere else regularly.</p>
-      <div className="split">
-        <button className="ghost" onClick={() => run(() => backupNow(db))}>Back up now</button>
-        <button className="primary" onClick={() => run(async () => { const m = await shareBackup(db); A.markShared(); return m; })}>Send a copy</button>
-      </div>
-      <button className="ghost" onClick={() => fileRef.current && fileRef.current.click()}>Restore from file</button>
-      <input ref={fileRef} type="file" accept=".json,application/json" hidden onChange={pick} />
-      {pending && (
-        <div className="card form">
-          <p className="small">Replace everything in the app with <b>{pending.name}</b>? This can't be undone, so send a copy first if unsure.</p>
-          <div className="split"><button className="danger" onClick={() => { A.restoreDb(pending.data); setPending(null); setMsg("Backup restored."); }}>Replace my data</button><button className="ghost" onClick={() => setPending(null)}>Cancel</button></div>
+    <>
+      <div className="card form">
+        <h2>Back up</h2>
+        <p className="muted small">Your records are stored inside this app. Every change is also saved as a file in Documents/RetailLedger on your phone. If the phone is lost, broken or reset, those files go with it, so send a copy somewhere else regularly.</p>
+        <div className="split">
+          <button className="ghost" onClick={() => run(() => backupNow(db))}>Back up now</button>
+          <button className="primary" onClick={() => run(async () => { const m = await shareBackup(db); A.markShared(); return m; })}>Send a copy</button>
         </div>
-      )}
-      {msg && <p className="small" role="status">{msg}</p>}
-    </div>
+        {msg && <p className="small" role="status">{msg}</p>}
+      </div>
+      <div className="card form">
+        <h2>Import and export</h2>
+        <p className="muted small">Importing only adds to what you have. Nothing is deleted, and likely duplicates are flagged for you to decide.</p>
+        <button className="ghost" onClick={() => openSheet({ t: "import", kind: "backup" })}>Restore from a backup file</button>
+        <button className="ghost" onClick={() => openSheet({ t: "import", kind: "choose" })}>Import from Excel or CSV</button>
+        <button className="ghost" onClick={() => openSheet({ t: "export", what: "sales" })}>Export to Excel or CSV</button>
+      </div>
+    </>
   );
 }
